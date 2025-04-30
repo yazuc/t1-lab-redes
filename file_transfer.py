@@ -7,31 +7,41 @@ class FileTransferManager:
         self.waiting_acks = {}
 
     def send_file(self, target_name, filepath):
+        if not os.path.exists(filepath):
+            print(f"Arquivo {filepath} não encontrado.")
+            return
+
         for name, (ip, port, _) in self.protocol.devices.items():
             if name == target_name:
                 addr = (ip, port)
                 size = os.path.getsize(filepath)
                 uid = str(int(time.time() * 1000))
                 self.protocol.send(f"FILE {uid} {os.path.basename(filepath)} {size}", addr)
-            
+
+                # Tratamento de arquivo vazio
                 if size == 0:
-                    open(f"recv_{uid}.tmp", "wb").close()  # cria o arquivo vazio no destino
-                    self.protocol.send(f"END {uid} {hash_file(filepath)}", addr)
+                    h = hash_file(filepath)
+                    self.protocol.send(f"END {uid}_end {h}", addr)
+                    print("Transferência de arquivo vazio iniciada.")
                     return
 
-                chunks = split_file(filepath)
-                def transfer():
-                    for seq, chunk in enumerate(chunks):
-                        encoded = base64.b64encode(chunk).decode()
-                        msg = f"CHUNK {uid} {seq} {encoded}"
-                        self.protocol.send(msg, addr)
-                        time.sleep(0.05)  # evite flooding
+                # Enviar blocos CHUNK com feedback de progresso
+                chunks = list(split_file(filepath, chunk_size=800))  # Contar blocos, limitar tamanho
+                total_chunks = len(chunks)
+                for seq, chunk in enumerate(chunks):
+                    encoded = base64.b64encode(chunk).decode()
+                    msg = f"CHUNK {uid}_{seq} {seq} {encoded}"  # ID único por CHUNK
+                    self.protocol.send(msg, addr)
+                    print(f"Enviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)")
+                    time.sleep(0.05)  # Evitar flooding
 
-                    h = hash_file(filepath)
-                    self.protocol.send(f"END {uid} {h}", addr)
-                threading.Thread(target=transfer, daemon=True).start()
+                # Enviar mensagem END
+                h = hash_file(filepath)
+                self.protocol.send(f"END {uid}_end {h}", addr)
+                print("Transferência concluída, aguardando validação.")
                 return
-        print("Dispositivo não encontrado.")    
+
+        print("Dispositivo não encontrado.")
 
     def handle_file_request(self, parts, addr):
         uid, filename, size = parts[1].split()
@@ -54,37 +64,39 @@ class FileTransferManager:
 
     def handle_chunk(self, parts, addr):
         uid, seq, data = parts[1].split(" ", 2)
+        seq = int(seq)
         if uid not in self.waiting_acks:
-            print(f"[ERRO] UID {uid} não encontrado em waiting_acks.")
             return
         
-        raw = base64.b64decode(data)
-        target_filename = self.waiting_acks[uid]["filename"]
-        with open(target_filename, "ab") as f:
-            f.write(raw)
-        self.protocol.send(f"ACK {uid}", addr)
+        # Verificar duplicata
+        if (uid, seq) in self.waiting_acks[uid].get("received_seqs", set()):
+            return
+        
+        # Armazenar chunk
+        self.waiting_acks[uid]["chunks"].append((seq, base64.b64decode(data)))
+        self.waiting_acks[uid]["received_seqs"] = self.waiting_acks[uid].get("received_seqs", set()) | {(uid, seq)}
+        self.protocol.send(f"ACK {uid}_{seq}", addr)
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
         if uid not in self.waiting_acks:
-            print(f"[ERRO] UID {uid} não encontrado em waiting_acks.")
             return
         
         target_filename = self.waiting_acks[uid]["filename"]
+        chunks = sorted(self.waiting_acks[uid]["chunks"], key=lambda x: x[0])  # Reordenar
+        with open(target_filename, "wb") as f:
+            for _, data in chunks:
+                f.write(data)
         
-        if not os.path.exists(target_filename):
-            print(f"[ERRO] Arquivo {target_filename} ainda não existe. Talvez CHUNKs não chegaram?")
-            return
-
         hash_local = hash_file(target_filename)
         if hash_local == hash_remote:
             print(f"Arquivo {target_filename} recebido com sucesso.")
             self.protocol.send(f"ACK {uid}", addr)
         else:
             print(f"Arquivo {target_filename} corrompido.")
+            os.remove(target_filename)  # Descartar arquivo corrompido
             self.protocol.send(f"NACK {uid} hash mismatch", addr)
         
-        # Limpa o waiting_acks após o término
         del self.waiting_acks[uid]
 
     def handle_ack(self, uid):

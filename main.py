@@ -17,6 +17,8 @@ def main():
     
     # Inicia recebimento de mensagens
     threading.Thread(target=protocol.listen_loop, daemon=True).start()
+   
+    threading.Thread(target=protocol.clean_devices, daemon=True).start()
 
     print("Digite comandos: devices | talk <nome> <mensagem> | sendfile <nome> <arquivo>")
     while True:

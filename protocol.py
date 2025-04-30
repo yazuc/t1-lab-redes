@@ -18,7 +18,31 @@ class UDPProtocol:
         self.sock.bind(("", port))
         self.handler = MessageHandler(self)
         self.file_manager = FileTransferManager(self)
+        self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}
+        threading.Thread(target=self.retransmit, daemon=True).start()
     
+    def send(self, msg, addr):
+        uid = msg.split()[1] if msg.split()[0] != "HEARTBEAT" else None
+        if uid:
+            self.pending_acks[uid] = (msg, addr, time.time(), 0)
+        self.sock.sendto(msg.encode(), addr)
+
+    def retransmit(self):
+        while True:
+            now = time.time()
+            for uid, (msg, addr, sent_time, attempts) in list(self.pending_acks.items()):
+                if now - sent_time > 2 and attempts < 3:
+                    self.sock.sendto(msg.encode(), addr)
+                    self.pending_acks[uid] = (msg, addr, now, attempts + 1)
+                elif attempts >= 3:
+                    print(f"Falha ao enviar {msg}: timeout após 3 tentativas")
+                    del self.pending_acks[uid]
+            time.sleep(0.5)
+
+    def handle_ack(self, uid):
+        if uid in self.pending_acks:
+            print(f"ACK recebido para {uid}")
+            del self.pending_acks[uid]
 
     def heartbeat_loop(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -27,8 +51,15 @@ class UDPProtocol:
         while True:
             msg = f"HEARTBEAT {self.name} {self.port}"
             sock.sendto(msg.encode(), (BROADCAST_IP, self.port))
-            time.sleep(2)
+            time.sleep(5)
             
+    def clean_devices(self):
+        while True:
+            now = time.time()
+            inactive = [name for name, (_, _, last_seen) in self.devices.items() if now - last_seen > 10]
+            for name in inactive:
+                del self.devices[name]
+            time.sleep(1)
 
 
     def listen_loop(self):
