@@ -61,6 +61,37 @@ class UDPProtocol:
                 uid, message = msg.split(maxsplit=1)  # Obtém o UID e a mensagem
                 print(f"Mensagem recebida de {addr[0]}: [{uid}] {message}")
 
+            # FILE (início do envio)
+            if msg.startswith("FILE"):
+                self.file_manager.handle_file_request(msg.split(" ", 1), addr)
+                continue
+
+            # CHUNK (parte do arquivo)
+            if msg.startswith("CHUNK"):
+                self.file_manager.handle_chunk(msg.split(" ", 1), addr)
+                continue
+
+            # END (finalização do envio)
+            if msg.startswith("END"):
+                self.file_manager.handle_end(msg.split(" ", 1), addr)
+                continue
+
+            # ACK (resposta de recebimento)
+            if msg.startswith("ACK"):
+                parts = msg.split()
+                if len(parts) >= 2:
+                    uid = parts[1]
+                    self.file_manager.handle_ack(uid)
+                continue
+
+            # NACK (resposta negativa)
+            if msg.startswith("NACK"):
+                print(f"NACK recebido: {msg}")
+                continue
+
+            # Qualquer outra coisa
+            #print(f"Mensagem desconhecida: {msg}")
+
 
     def send(self, msg, addr):
         self.sock.sendto(msg.encode(), addr)

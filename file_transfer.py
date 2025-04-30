@@ -13,6 +13,11 @@ class FileTransferManager:
                 size = os.path.getsize(filepath)
                 uid = str(int(time.time() * 1000))
                 self.protocol.send(f"FILE {uid} {os.path.basename(filepath)} {size}", addr)
+            
+                if size == 0:
+                    open(f"recv_{uid}.tmp", "wb").close()  # cria o arquivo vazio no destino
+                    self.protocol.send(f"END {uid} {hash_file(filepath)}", addr)
+                    return
 
                 chunks = split_file(filepath)
                 def transfer():
@@ -26,31 +31,61 @@ class FileTransferManager:
                     self.protocol.send(f"END {uid} {h}", addr)
                 threading.Thread(target=transfer, daemon=True).start()
                 return
-        print("Dispositivo não encontrado.")
+        print("Dispositivo não encontrado.")    
 
     def handle_file_request(self, parts, addr):
         uid, filename, size = parts[1].split()
         print(f"Iniciando recebimento de {filename} ({size} bytes)")
-        self.waiting_acks[uid] = []
+        
+        # Verifica se o arquivo já existe
+        target_filename = filename
+        counter = 1
+        while os.path.exists(target_filename):
+            name, ext = os.path.splitext(filename)
+            target_filename = f"{name}_{counter}{ext}"
+            counter += 1
+
+        # Armazena o nome do arquivo ajustado
+        self.waiting_acks[uid] = {"filename": target_filename, "chunks": []}
+
+        # Cria o arquivo com o nome ajustado
+        with open(target_filename, "wb") as f:
+            pass
 
     def handle_chunk(self, parts, addr):
         uid, seq, data = parts[1].split(" ", 2)
+        if uid not in self.waiting_acks:
+            print(f"[ERRO] UID {uid} não encontrado em waiting_acks.")
+            return
+        
         raw = base64.b64decode(data)
-        path = f"recv_{uid}.tmp"
-        with open(path, "ab") as f:
+        target_filename = self.waiting_acks[uid]["filename"]
+        with open(target_filename, "ab") as f:
             f.write(raw)
         self.protocol.send(f"ACK {uid}", addr)
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
-        path = f"recv_{uid}.tmp"
-        hash_local = hash_file(path)
+        if uid not in self.waiting_acks:
+            print(f"[ERRO] UID {uid} não encontrado em waiting_acks.")
+            return
+        
+        target_filename = self.waiting_acks[uid]["filename"]
+        
+        if not os.path.exists(target_filename):
+            print(f"[ERRO] Arquivo {target_filename} ainda não existe. Talvez CHUNKs não chegaram?")
+            return
+
+        hash_local = hash_file(target_filename)
         if hash_local == hash_remote:
-            print("Arquivo recebido com sucesso.")
+            print(f"Arquivo {target_filename} recebido com sucesso.")
             self.protocol.send(f"ACK {uid}", addr)
         else:
-            print("Arquivo corrompido.")
+            print(f"Arquivo {target_filename} corrompido.")
             self.protocol.send(f"NACK {uid} hash mismatch", addr)
+        
+        # Limpa o waiting_acks após o término
+        del self.waiting_acks[uid]
 
     def handle_ack(self, uid):
         print(f"ACK recebido para {uid}")

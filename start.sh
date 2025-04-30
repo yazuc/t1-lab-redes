@@ -17,7 +17,9 @@ podman run -d \
   --privileged \
   --network lab \
   -p ${PORT}:8080 \
-  labredes
+  labredes \
+  bash -c "cd /home/ex && python3 main.py"
+
 
 # Espera um pouco o container subir
 sleep 2
