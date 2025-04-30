@@ -18,7 +18,7 @@ podman run -d \
   --network lab \
   -p ${PORT}:8080 \
   labredes \
-  bash -c "cd /home/ex && python3 main.py"
+  bash -c "cd /ex && python3 main.py"
 
 
 # Espera um pouco o container subir
@@ -26,7 +26,7 @@ sleep 2
 
 # Exemplo: copia um arquivo local para dentro do container
 # Altere conforme necessário
-podman cp ~/ex ${CONTAINER_NAME}:/home/ex
+podman cp ~/ex ${CONTAINER_NAME}:/ex
 
 # Abre o navegador na porta correta
 xdg-open http://localhost:${PORT} >/dev/null 2>&1 &
