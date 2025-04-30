@@ -2,7 +2,7 @@ import socket, threading, time, base64
 from utils import current_time, hash_file, split_file
 from message_handler import MessageHandler
 from file_transfer import FileTransferManager
-from teste import get_broadcast_address
+#from teste import get_broadcast_address
 
 BROADCAST_IP = '<broadcast>'
 BUFFER_SIZE = 65507
@@ -40,7 +40,11 @@ class UDPProtocol:
         while True:
             data, addr = self.sock.recvfrom(2048)
             msg = data.decode()
-            print(f"Recebido de {addr}: {data.decode()}")  # Depuração para mostrar a mensagem recebida
+            #print(f"Recebido de {addr}: {data.decode()}")  # Depuração para mostrar a mensagem recebida
+            sender_ip, sender_port = addr
+
+            if sender_ip == self.name and sender_port == self.port:
+                continue
 
             # Verifica se a mensagem é um HEARTBEAT
             if msg.startswith("HEARTBEAT"):
