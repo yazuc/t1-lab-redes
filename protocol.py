@@ -2,7 +2,6 @@ import socket, threading, time, base64
 from utils import current_time, hash_file, split_file
 from message_handler import MessageHandler
 from file_transfer import FileTransferManager
-#from teste import get_broadcast_address
 
 BROADCAST_IP = '<broadcast>'
 BUFFER_SIZE = 65507
@@ -17,14 +16,15 @@ class UDPProtocol:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("", port))
         self.handler = MessageHandler(self)
-        self.file_manager = FileTransferManager(self)
         self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}        
+        self.file_manager = FileTransferManager(self)
         #threading.Thread(target=self.retransmit, daemon=True).start()
     
     def send(self, msg, addr):
         uid = msg.split()[1] if msg.split()[0] != "HEARTBEAT" else None
         if uid:
             self.pending_acks[uid] = (msg, addr, time.time(), 0)
+
         self.sock.sendto(msg.encode(), addr)
 
     def retransmit(self):

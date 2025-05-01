@@ -30,8 +30,10 @@ class MessageHandler:
         elif cmd == "FILE":
             self.protocol.file_manager.handle_file_request(msg.split(" ", 1), addr)
         elif cmd == "CHUNK":
+            print("recebendo chunks no handler")
             self.protocol.file_manager.handle_chunk(msg.split(" ", 1), addr)
         elif cmd == "END":
+            print("recebendo end no handler")
             self.protocol.file_manager.handle_end(msg.split(" ", 1), addr)
         elif cmd == "ACK":
             self.protocol.handle_ack(arg1)

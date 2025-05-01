@@ -19,15 +19,15 @@ def main():
    
     threading.Thread(target=protocol.clean_devices, daemon=True).start()
 
-    print("Digite comandos: d | t <nome> <mensagem> | s <nome> <arquivo>")
+    print("Digite comandos: devices | talk <nome> <mensagem> | sendfile <nome> <arquivo>")
     while True:
         cmd = input("> ").strip()
-        if cmd == "d":
+        if cmd == "devices":
             protocol.print_devices()
-        elif cmd.startswith("t "):
+        elif cmd.startswith("talk "):
             _, nome, *msg = cmd.split()
             protocol.send_talk(nome, " ".join(msg))
-        elif cmd.startswith("s "):
+        elif cmd.startswith("sendfile "):
             _, nome, arquivo = cmd.split()
             protocol.send_file(nome, arquivo)
         else:
