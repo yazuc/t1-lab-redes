@@ -45,6 +45,9 @@ class FileTransferManager:
 
     def handle_file_request(self, parts, addr):
         uid, filename, size = parts[1].split()
+        
+        self.protocol.send(f"ACK {uid}", addr)
+        
         print(f"Iniciando recebimento de {filename} ({size} bytes)")
         
         # Verifica se o arquivo já existe
@@ -64,14 +67,18 @@ class FileTransferManager:
 
     def handle_chunk(self, parts, addr):
         uid, seq, data = parts[1].split(" ", 2)
+        self.protocol.send(f"ACK {uid}", addr)
+
         seq = int(seq)
         if uid not in self.waiting_acks:
             return
-        
+
         # Verificar duplicata
         if (uid, seq) in self.waiting_acks[uid].get("received_seqs", set()):
+            # Enviar ACK mesmo para chunk duplicado, se desejado
+            self.protocol.send(f"ACK {uid}_{seq}", addr)
             return
-        
+
         # Armazenar chunk
         self.waiting_acks[uid]["chunks"].append((seq, base64.b64decode(data)))
         self.waiting_acks[uid]["received_seqs"] = self.waiting_acks[uid].get("received_seqs", set()) | {(uid, seq)}
@@ -79,6 +86,8 @@ class FileTransferManager:
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
+        #self.protocol.send(f"ACK {uid}", addr)
+        
         if uid not in self.waiting_acks:
             return
         
@@ -98,6 +107,3 @@ class FileTransferManager:
             self.protocol.send(f"NACK {uid} hash mismatch", addr)
         
         del self.waiting_acks[uid]
-
-    def handle_ack(self, uid):
-        print(f"ACK recebido para {uid}")

@@ -18,8 +18,8 @@ class UDPProtocol:
         self.sock.bind(("", port))
         self.handler = MessageHandler(self)
         self.file_manager = FileTransferManager(self)
-        self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}
-        threading.Thread(target=self.retransmit, daemon=True).start()
+        self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}        
+        #threading.Thread(target=self.retransmit, daemon=True).start()
     
     def send(self, msg, addr):
         uid = msg.split()[1] if msg.split()[0] != "HEARTBEAT" else None
@@ -67,7 +67,7 @@ class UDPProtocol:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self.sock.bind(("", self.port))
-
+        vald = False
         while True:
             data, addr = self.sock.recvfrom(2048)
             msg = data.decode()
@@ -84,49 +84,59 @@ class UDPProtocol:
                 port = int(parts[2])  # <-- Aqui, usamos a porta enviada na mensagem
                 ip = addr[0]
                 last_seen = time.time()
-
-                # Agora estamos usando a porta correta do outro dispositivo
+                vald = True
                 self.devices[name] = (ip, port, last_seen)
 
             if msg.startswith("TALK"):
                 uid, message = msg.split(maxsplit=1)  # Obtém o UID e a mensagem
                 print(f"Mensagem recebida de {addr[0]}: [{uid}] {message}")
+                self.handler.handle(msg, addr)
+                vald = True
 
-            # FILE (início do envio)
             if msg.startswith("FILE"):
-                self.file_manager.handle_file_request(msg.split(" ", 1), addr)
+                #self.file_manager.handle_file_request(msg.split(" ", 1), addr)
+                self.handler.handle(msg, addr)
+                vald = True
                 continue
 
             # CHUNK (parte do arquivo)
             if msg.startswith("CHUNK"):
-                self.file_manager.handle_chunk(msg.split(" ", 1), addr)
+                #self.file_manager.handle_chunk(msg.split(" ", 1), addr)
+                self.handler.handle(msg, addr)
+                vald = True
                 continue
 
             # END (finalização do envio)
             if msg.startswith("END"):
-                self.file_manager.handle_end(msg.split(" ", 1), addr)
+                #self.file_manager.handle_end(msg.split(" ", 1), addr)
+                self.handler.handle(msg, addr)
+                vald = True
                 continue
 
             # ACK (resposta de recebimento)
             if msg.startswith("ACK"):
+                #print(f"recebeu ACK em {msg}")
                 parts = msg.split()
-                print(msg)
+                vald = True
                 if len(parts) >= 2:
+                    #print("handleou o ack")
                     uid = parts[1]
-                    self.file_manager.handle_ack(uid)
+                    self.handle_ack(uid)
                 continue
 
             # NACK (resposta negativa)
             if msg.startswith("NACK"):
                 print(f"NACK recebido: {msg}")
+                vald = True
                 continue
+            
+            if vald == False: 
+                print(msg)            
+                print(f"Mensagem desconhecida: {msg}")
 
-            # Qualquer outra coisa
-            #print(f"Mensagem desconhecida: {msg}")
 
-
-    def send(self, msg, addr):
-        self.sock.sendto(msg.encode(), addr)
+    # def send(self, msg, addr):
+    #     self.sock.sendto(msg.encode(), addr)
 
     def send_broadcast(self, msg):
         self.send(msg, (BROADCAST_IP, self.port))
