@@ -110,6 +110,7 @@ class UDPProtocol:
             # ACK (resposta de recebimento)
             if msg.startswith("ACK"):
                 parts = msg.split()
+                print(msg)
                 if len(parts) >= 2:
                     uid = parts[1]
                     self.file_manager.handle_ack(uid)
