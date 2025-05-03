@@ -59,7 +59,7 @@ class UDPProtocol:
             if uid in self.pending_acks:
                 #print(f"ACK recebido para {uid} em protocol")
                 del self.pending_acks[uid]
-                print(self.pending_acks)
+                #print(self.pending_acks)
 
     def heartbeat_loop(self):
         while True:

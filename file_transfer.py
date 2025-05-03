@@ -66,12 +66,12 @@ class FileTransferManager:
                         chunk_id = f"{uid}_{seq}"
                         msg = f"CHUNK {chunk_id} {seq} {encoded}"
                         self.protocol.send(msg, addr)
-                        #print(f"Enviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)")
                         if not self.wait_for_ack(chunk_id, timeout=5.0):
                             print(f"Timeout aguardando ACK para CHUNK {chunk_id}")
                             return
                         seq += 1
                         time.sleep(0.001)  # Evitar flooding
+                        print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
 
                 # Enviar mensagem END
                 h = hash_file(filepath)
@@ -119,16 +119,15 @@ class FileTransferManager:
         if uid not in self.waiting_acks:
             print(f"Recebeu chunk para UID desconhecido: {uid}")
             return
+        
+        print(f"\rRecebeu bloco {uid}_{seq}", end="", flush=True)
 
         # Armazenar chunk
         self.waiting_acks[uid]["chunks"].append((seq, decoded))
-        #self.waiting_acks[uid]["received_seqs"] = self.waiting_acks[uid].get("received_seqs", set()) | {(uid, seq)}
         self.protocol.send(f"ACK {uid}_{seq}", addr)
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
-        #print("caiu no handler_end")
-        #print(uid)
         uid, seq = uid.split("_")
         if uid not in self.waiting_acks:
             return
