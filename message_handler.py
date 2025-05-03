@@ -25,15 +25,14 @@ class MessageHandler:
             self.protocol.devices[name] = (addr[0], addr[1], time.time())
         elif cmd == "TALK":
             uid, content = arg1, parts[2]
-            print(f"[Mensagem recebida] {addr} diz: {content}") 
+            print(f"Mensagem recebida de {addr[0]}: [{uid}] {content}")            
             self.protocol.send(f"ACK {uid}", addr)
         elif cmd == "FILE":
             self.protocol.file_manager.handle_file_request(msg.split(" ", 1), addr)
         elif cmd == "CHUNK":
-            print("recebendo chunks no handler")
             self.protocol.file_manager.handle_chunk(msg.split(" ", 1), addr)
         elif cmd == "END":
-            print("recebendo end no handler")
+            #print("recebendo end no handler")
             self.protocol.file_manager.handle_end(msg.split(" ", 1), addr)
         elif cmd == "ACK":
             self.protocol.handle_ack(arg1)

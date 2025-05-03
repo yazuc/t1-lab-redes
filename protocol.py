@@ -14,43 +14,60 @@ class UDPProtocol:
         self.devices = {}  # {name: (ip, port, last_heartbeat)}
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024)  # 2MB send buffer
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)  # 2MB receive buffer
         self.sock.bind(("", port))
         self.handler = MessageHandler(self)
         self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}        
         self.file_manager = FileTransferManager(self)
+        self.socket_lock = threading.Lock()  # Add lock for thread-safe socket access
         #threading.Thread(target=self.retransmit, daemon=True).start()
     
     def send(self, msg, addr):
-        uid = msg.split()[1] if msg.split()[0] != "HEARTBEAT" else None
-        if uid:
+        parts = msg.split()
+        if parts[0] not in ["HEARTBEAT", "ACK"]:
+            uid = parts[1]
             self.pending_acks[uid] = (msg, addr, time.time(), 0)
+        with self.socket_lock:
+            try:
+                self.sock.sendto(msg.encode(), addr)
+            except socket.error as e:
+                print(f"Socket error during send: {e}")
 
-        self.sock.sendto(msg.encode(), addr)
 
     def retransmit(self):
         while True:
             now = time.time()
-            for uid, (msg, addr, sent_time, attempts) in list(self.pending_acks.items()):
-                if now - sent_time > 2 and attempts < 3:
-                    self.sock.sendto(msg.encode(), addr)
-                    self.pending_acks[uid] = (msg, addr, now, attempts + 1)
-                elif attempts >= 3:
-                    print(f"Falha ao enviar {msg}: timeout após 3 tentativas")
-                    del self.pending_acks[uid]
-            time.sleep(0.5)
+            with self.socket_lock:  # Protect pending_acks access
+                for uid, (msg, addr, sent_time, attempts) in list(self.pending_acks.items()):
+                    if now - sent_time > 2 and attempts < 3:
+                        try:
+                            self.sock.sendto(msg.encode(), addr)
+                            self.pending_acks[uid] = (msg, addr, now, attempts + 1)
+                            print(f"Retransmitting {uid}, attempt {attempts + 1}")
+                        except socket.error as e:
+                            print(f"Socket error during retransmit: {e}")
+                    elif attempts >= 3:
+                        print(f"Falha ao enviar {msg}: timeout após 3 tentativas")
+                        self.sock.sendto(f"NACK {uid}".encode(), addr)
+                        del self.pending_acks[uid]
+            time.sleep(1)  # Increase sleep to reduce retransmission overhead
 
     def handle_ack(self, uid):
-        if uid in self.pending_acks:
-            print(f"ACK recebido para {uid}")
-            del self.pending_acks[uid]
+        with self.socket_lock:
+            if uid in self.pending_acks:
+                #print(f"ACK recebido para {uid} em protocol")
+                del self.pending_acks[uid]
+                print(self.pending_acks)
 
     def heartbeat_loop(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-
         while True:
             msg = f"HEARTBEAT {self.name} {self.port}"
-            sock.sendto(msg.encode(), (BROADCAST_IP, self.port))
+            try:
+                self.sock.sendto(msg.encode(), (BROADCAST_IP, self.port))
+            except socket.error as e:
+                print(f"Erro ao enviar heartbeat: {e}")
             time.sleep(5)
             
     def clean_devices(self):
@@ -63,86 +80,36 @@ class UDPProtocol:
 
 
     def listen_loop(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        self.sock.bind(("", self.port))
-        vald = False
         while True:
-            data, addr = self.sock.recvfrom(2048)
-            msg = data.decode()
-            #print(f"Recebido de {addr}: {data.decode()}")  # Depuração para mostrar a mensagem recebida
-            sender_ip, sender_port = addr
+            try:
+                data, addr = self.sock.recvfrom(2048)
+                msg = data.decode()
+                sender_ip, sender_port = addr
 
-            if sender_ip == self.name and sender_port == self.port:
+                if sender_ip == self.name and sender_port == self.port:
+                    continue
+
+                if msg.startswith("HEARTBEAT"):
+                    parts = msg.split()
+                    name = parts[1]
+                    port = int(parts[2])
+                    ip = addr[0]
+                    last_seen = time.time()
+                    self.devices[name] = (ip, port, last_seen)
+                elif msg.startswith(("TALK", "FILE", "CHUNK", "END", "ACK", "NACK")):
+                    self.handler.handle(msg, addr)
+                else:
+                    print(f"Mensagem desconhecida: {msg}")
+            except socket.error as e:
+                print(f"Socket error in listen_loop: {e}")
                 continue
-
-            # Verifica se a mensagem é um HEARTBEAT
-            if msg.startswith("HEARTBEAT"):
-                parts = msg.split()
-                name = parts[1]
-                port = int(parts[2])  # <-- Aqui, usamos a porta enviada na mensagem
-                ip = addr[0]
-                last_seen = time.time()
-                vald = True
-                self.devices[name] = (ip, port, last_seen)
-
-            if msg.startswith("TALK"):
-                uid, message = msg.split(maxsplit=1)  # Obtém o UID e a mensagem
-                print(f"Mensagem recebida de {addr[0]}: [{uid}] {message}")
-                self.handler.handle(msg, addr)
-                vald = True
-
-            if msg.startswith("FILE"):
-                #self.file_manager.handle_file_request(msg.split(" ", 1), addr)
-                self.handler.handle(msg, addr)
-                vald = True
-                continue
-
-            # CHUNK (parte do arquivo)
-            if msg.startswith("CHUNK"):
-                #self.file_manager.handle_chunk(msg.split(" ", 1), addr)
-                self.handler.handle(msg, addr)
-                vald = True
-                continue
-
-            # END (finalização do envio)
-            if msg.startswith("END"):
-                #self.file_manager.handle_end(msg.split(" ", 1), addr)
-                self.handler.handle(msg, addr)
-                vald = True
-                continue
-
-            # ACK (resposta de recebimento)
-            if msg.startswith("ACK"):
-                #print(f"recebeu ACK em {msg}")
-                parts = msg.split()
-                vald = True
-                if len(parts) >= 2:
-                    #print("handleou o ack")
-                    uid = parts[1]
-                    self.handle_ack(uid)
-                continue
-
-            # NACK (resposta negativa)
-            if msg.startswith("NACK"):
-                print(f"NACK recebido: {msg}")
-                vald = True
-                continue
-            
-            if vald == False: 
-                print(msg)            
-                print(f"Mensagem desconhecida: {msg}")
-
-
-    # def send(self, msg, addr):
-    #     self.sock.sendto(msg.encode(), addr)
 
     def send_broadcast(self, msg):
         self.send(msg, (BROADCAST_IP, self.port))
 
     def print_devices(self):
         now = time.time()
+        print(self.devices)
         ativos = [(name, ip, port, round(now - last_seen, 1))
                 for name, (ip, port, last_seen) in self.devices.items()
                 if now - last_seen < 10]  # considerar inativo após 10s

@@ -13,10 +13,8 @@ def main():
 
     # Inicia HEARTBEAT
     threading.Thread(target=protocol.heartbeat_loop, daemon=True).start()
-
     # Inicia recebimento de mensagens
-    threading.Thread(target=protocol.listen_loop, daemon=True).start()
-   
+    threading.Thread(target=protocol.listen_loop, daemon=True).start()   
     threading.Thread(target=protocol.clean_devices, daemon=True).start()
 
     print("Digite comandos: devices | talk <nome> <mensagem> | sendfile <nome> <arquivo>")
@@ -29,7 +27,8 @@ def main():
             protocol.send_talk(nome, " ".join(msg))
         elif cmd.startswith("sendfile "):
             _, nome, arquivo = cmd.split()
-            protocol.send_file(nome, arquivo)
+            threading.Thread(target=protocol.file_manager.send_file, args=(nome, arquivo), daemon=True).start()
+            #protocol.send_file(nome, arquivo)
         else:
             print("Comando inválido.")
             print("> ")
