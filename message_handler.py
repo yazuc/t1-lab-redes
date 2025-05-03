@@ -38,3 +38,4 @@ class MessageHandler:
             self.protocol.handle_ack(arg1)
         elif cmd == "NACK":
             print(f"NACK recebido para {arg1}: {parts[2]}")
+            self.protocol.retransmit(arg1)

@@ -49,8 +49,7 @@ class UDPProtocol:
                         except socket.error as e:
                             print(f"Socket error during retransmit: {e}")
                     elif attempts >= 3:
-                        print(f"Falha ao enviar {msg}: timeout após 3 tentativas")
-                        self.sock.sendto(f"NACK {uid}".encode(), addr)
+                        print(f"Falha ao enviar {msg}: timeout após 3 tentativas")                        
                         del self.pending_acks[uid]
             time.sleep(1)  # Increase sleep to reduce retransmission overhead
 

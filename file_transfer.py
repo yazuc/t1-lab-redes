@@ -17,12 +17,6 @@ class FileTransferManager:
             time.sleep(0.1)  # Evitar consumo excessivo de CPU
         return False
 
-    def handle_ack(self, uid):
-        """Registra o recebimento de um ACK."""
-        with self.lock:
-            self.protocol.pending_acks[uid] = True
-            print(f"ACK recebido para {uid} em file_transfer")
-
     def send_file(self, target_name, filepath):
         if not os.path.exists(filepath):
             print(f"Arquivo {filepath} não encontrado.")
