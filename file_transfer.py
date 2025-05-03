@@ -13,8 +13,11 @@ class FileTransferManager:
         while time.time() - start_time < timeout:
             with self.lock:
                 if ack_id in self.protocol.pending_acks:
-                    return True
-            time.sleep(0.1)  # Evitar consumo excessivo de CPU
+                    _, _, _, _, validado = self.protocol.pending_acks[ack_id]
+                    if validado:
+                        del self.protocol.pending_acks[ack_id]
+                        return True
+            time.sleep(0.002)  # Evitar consumo excessivo de CPU
         return False
 
     def send_file(self, target_name, filepath):
@@ -60,12 +63,12 @@ class FileTransferManager:
                         chunk_id = f"{uid}_{seq}"
                         msg = f"CHUNK {chunk_id} {seq} {encoded}"
                         self.protocol.send(msg, addr)
+                        print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
                         if not self.wait_for_ack(chunk_id, timeout=5.0):
                             print(f"Timeout aguardando ACK para CHUNK {chunk_id}")
                             return
                         seq += 1
                         time.sleep(0.001)  # Evitar flooding
-                        print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
 
                 # Enviar mensagem END
                 h = hash_file(filepath)
@@ -127,7 +130,7 @@ class FileTransferManager:
             return
 
         # Enviar ACK imediato para confirmar recebimento do END
-        self.protocol.send(f"ACK {uid}", addr)
+        self.protocol.send(f"ACK {uid}_end", addr)
         print("enviou ACK para o END, precisa validar hash ainda")
 
         target_filename = self.waiting_acks[uid]["filename"]

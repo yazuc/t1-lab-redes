@@ -28,13 +28,13 @@ class UDPProtocol:
         parts = msg.split()
         if parts[0] not in ["HEARTBEAT", "ACK"]:
             uid = parts[1]
-            self.pending_acks[uid] = (msg, addr, time.time(), 0)
+            #self.pending_acks[uid] = (msg, addr, time.time(), 0)
+            self.pending_acks[uid] = (msg, addr, time.time(), 0, False)
         with self.socket_lock:
             try:
                 self.sock.sendto(msg.encode(), addr)
             except socket.error as e:
                 print(f"Socket error during send: {e}")
-
 
     def retransmit(self):
         while True:
@@ -57,7 +57,9 @@ class UDPProtocol:
         with self.socket_lock:
             if uid in self.pending_acks:
                 #print(f"ACK recebido para {uid} em protocol")
-                del self.pending_acks[uid]
+                msg, addr, sent_time, attempts, _ = self.pending_acks[uid]
+                self.pending_acks[uid] = (msg, addr, sent_time, attempts, True)
+                #del self.pending_acks[uid]
                 #print(self.pending_acks)
 
     def heartbeat_loop(self):
@@ -128,9 +130,8 @@ class UDPProtocol:
                 uid = str(int(time.time() * 1000))
                 msg = f"TALK {uid} {message}"
 
-                # Verifica se a mensagem foi formada corretamente
                 print(f"Enviando para {name} ({ip}:{port}): {msg}")
-
+                
                 # Envia a mensagem
                 self.send(msg, (ip, port))
                 return
