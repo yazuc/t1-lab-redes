@@ -17,7 +17,7 @@ class FileTransferManager:
             if ack_id in self.protocol.pending_acks:
                 _, _, _, _, validado = self.protocol.pending_acks[ack_id]
                 if validado:
-                    print("validei e estou deletando")
+                    #print("validei e estou deletando")
                     #del self.protocol.pending_acks[ack_id]
                     return True
             time.sleep(0.002)  # Evitar consumo excessivo de CPU
@@ -68,9 +68,10 @@ class FileTransferManager:
 
                         for attempt in range(self.max_attempts):
                             self.protocol.send(msg, addr)
-                            print(msg, addr)
+                            #print(msg, addr)
                             print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
-                            if self.wait_for_ack(chunk_id, timeout=15.0):
+                            if self.wait_for_ack(chunk_id, timeout=5.0):
+                                #print(self.protocol.pending_acks)
                                 break  # ACK recebido, prosseguir para o próximo chunk
                             print(f"\nTimeout aguardando ACK para CHUNK {chunk_id}. Tentativa {attempt + 1}/{self.max_attempts}")
                         else:
@@ -123,29 +124,64 @@ class FileTransferManager:
             pass
 
     def handle_chunk(self, parts, addr):
-        uid, seq, data = parts[1].split(" ", 2)
-        uid, seq = uid.split("_")
-        seq = int(seq)
+        if not parts or len(parts) < 2:
+            print("CHUNK malformado: partes insuficientes")
+            return
 
-        decoded = base64.b64decode(data)
-        data = self.waiting_acks[uid]
+        chunk_info = parts[1]
+        if " " not in chunk_info:
+            print("CHUNK malformado: faltando campos de uid, seq ou dados")
+            return
+
+        split_parts = chunk_info.split(" ", 2)
+        if len(split_parts) < 3:
+            print("CHUNK malformado: divisão insuficiente")
+            return
+
+        uid_seq, seq_str, data = split_parts
+        if "_" not in uid_seq:
+            print("CHUNK malformado: uid_seq não contém '_'")
+            return
+
+        uid, seq_index = uid_seq.split("_", 1)
+        if not seq_index.isdigit():
+            print(f"CHUNK malformado: seq não é um número ({seq_index})")
+            return
+
+        seq = int(seq_index)
 
         if uid not in self.waiting_acks:
             print(f"Recebeu chunk para UID desconhecido: {uid}")
             return
 
+        file_data = self.waiting_acks[uid]
+        if "received_seqs" not in file_data or "chunks" not in file_data or "total_chunks" not in file_data:
+            print(f"Dados incompletos para UID {uid}")
+            return
 
-        if uid in self.waiting_acks:
-            if seq not in data["received_seqs"]:
-                data["received_seqs"].add(seq)
-                data["chunks"].append((seq, decoded))
-                total_chunks = int(data["total_chunks"])
-                print(f"\rRecebendo bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
-                self.protocol.send(f"ACK {uid}_{seq}", addr)
-        
+        try:
+            decoded = base64.b64decode(data)
+        except Exception as e:
+            print(f"Erro ao decodificar chunk base64: {e}")
+            return
 
-        # Armazenar chunk
-        #self.waiting_acks[uid]["chunks"].append((seq, decoded))
+        if seq not in file_data["received_seqs"]:
+            file_data["received_seqs"].add(seq)
+            file_data["chunks"].append((seq, decoded))
+
+            try:
+                total_chunks = int(file_data["total_chunks"])
+            except ValueError:
+                print("total_chunks não é um inteiro válido")
+                return
+
+            print(f"\rRecebendo bloco {seq + 1}/{total_chunks} "
+                f"({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
+
+            ack_msg = f"ACK {uid}_{seq}"
+            self.protocol.send(ack_msg, addr)
+            print(ack_msg)
+
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
@@ -188,16 +224,3 @@ class FileTransferManager:
             self.protocol.send(f"NACK {uid} hash mismatch", addr)
 
         del self.waiting_acks[uid]
-
-    # def retransmit_chunks(self, uid, filepath, missing_seqs):
-    #     print(f"Reenviando chunks ausentes: {missing_seqs}")
-    #     with open(filepath, "rb") as f:
-    #         for seq_str in missing_seqs:
-    #             seq = int(seq_str)
-    #             f.seek(seq * 800)
-    #             chunk = f.read(800)
-    #             encoded = base64.b64encode(chunk).decode()
-    #             chunk_id = f"{uid}_{seq}"
-    #             msg = f"CHUNK {chunk_id} {seq} {encoded}"
-    #             self.protocol.send(msg, self.protocol.devices[target_name])
-    #             self.wait_for_ack(chunk_id)

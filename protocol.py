@@ -7,6 +7,7 @@ from datetime import datetime
 BROADCAST_IP = '<broadcast>'
 BUFFER_SIZE = 65507
 port = 5000
+total_received = 0
 
 class UDPProtocol:
     def __init__(self, name):
@@ -26,19 +27,38 @@ class UDPProtocol:
         #threading.Thread(target=self.retransmit, daemon=True).start()
     
     def send(self, msg, addr):
-        parts = msg.split()
-        if parts[0] not in ["HEARTBEAT", "ACK"]:
-            uid = parts[1]
-            #self.pending_acks[uid] = (msg, addr, time.time(), 0)
-            self.pending_acks[uid] = (msg, addr, time.time(), 0, False)
-        #with self.socket_lock:
         try:
-            self.sock.sendto(msg.encode(), addr)
-        except socket.error as e:
-            print(f"Socket error during send: {e}")
+            if not isinstance(msg, str) or not msg.strip():
+                print(f"[ERRO] Mensagem inválida para envio: ")
+                return
+
+            if not (isinstance(addr, tuple) and len(addr) == 2):
+                print(f"[ERRO] Endereço inválido para envio: ")
+                return
+
+            parts = msg.strip().split()
+            if not parts:
+                print(f"[ERRO] Mensagem sem conteúdo válido: ")
+                return
+
+            if parts[0] not in ["HEARTBEAT", "ACK"]:
+                if len(parts) < 2:
+                    print(f"[ERRO] Mensagem malformada (sem UID): ")
+                    return
+                uid = parts[1]
+                self.pending_acks[uid] = (msg, addr, time.time(), 0, False)
+
+            try:
+                self.sock.sendto(msg.encode(), addr)
+            except socket.error as e:
+                print(f"Socket error durante envio: {e}")
+        except Exception as e:
+            print(f"[ERRO] Exceção inesperada em send(): {e} - msg: {msg}, addr: {addr}")
+
+
 
     def handle_ack(self, uid):
-        print("tratando de", uid)
+        #print("tratando de", uid)
         #with self.socket_lock:
         if uid in self.pending_acks:
             msg, addr, sent_time, attempts, _ = self.pending_acks[uid]
@@ -63,15 +83,18 @@ class UDPProtocol:
 
 
     def listen_loop(self):
+
+        total_received = 0
         while True:
             try:
-                data, addr = self.sock.recvfrom(2048)
+                data, addr = self.sock.recvfrom(65535)                
+
                 msg = data.decode()
                 sender_ip, sender_port = addr
 
 
                 if sender_ip == self.name and sender_port == self.port:
-                    continue
+                    continue                                    
 
                 if msg.startswith("HEARTBEAT"):
                     parts = msg.split()
@@ -82,7 +105,7 @@ class UDPProtocol:
                     self.devices[name] = (ip, port, last_seen)
                 elif msg.startswith(("TALK", "FILE", "CHUNK", "END", "ACK", "NACK")):
                     try:
-                        print(f"[{datetime.now()}] Despachando mensagem para handler: {msg}")
+                        #print(f"[{datetime.now()}] Despachando mensagem para handler: {msg}")
                         self.handler.handle(msg, addr)
                     except Exception as e:
                         print(f"[{datetime.now()}] Erro no handler para mensagem {msg}: {e}")
@@ -126,24 +149,3 @@ class UDPProtocol:
 
     def send_file(self, target_name, filepath):
         self.file_manager.send_file(target_name, filepath)
-
-    def handle_nack(self, parts, addr):
-    # Extrai os dados do NACK
-        print("caiu no nackhandler")
-        uid = parts[1]
-        missing_chunks = list(map(int, parts[2:]))  # Conversão para lista de inteiros
-
-        print(f"Recebido NACK para UID {uid}. Pacotes perdidos: {missing_chunks}")
-        
-        # Recupera os pacotes perdidos e envia novamente
-        if uid in self.waiting_acks:
-            data = self.waiting_acks[uid]
-            for seq in missing_chunks:
-                # Envia os pacotes perdidos de volta
-                print(f"Reenviando CHUNK {seq} de {uid}")
-                chunk_data = data["chunks"][seq]  # Supondo que "chunks" já tenha os dados
-                chunk = base64.b64encode(chunk_data).decode()
-                chunk_id = f"{uid}_{seq}"
-                msg = f"CHUNK {chunk_id} {seq} {chunk}"
-                self.protocol.send(msg, addr)
-

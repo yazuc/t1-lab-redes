@@ -36,5 +36,4 @@ class MessageHandler:
         elif cmd == "ACK":
             self.protocol.handle_ack(arg1)
         elif cmd == "NACK":
-            #print(f"NACK recebido para {arg1}: {parts[2]}")
-            self.protocol.handle_nack(parts, addr)
+            print(f"NACK recebido para {arg1}: {parts[2]}")            
