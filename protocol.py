@@ -21,7 +21,7 @@ class UDPProtocol:
         self.handler = MessageHandler(self)
         self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}        
         self.file_manager = FileTransferManager(self)
-        self.socket_lock = threading.Lock()  # Add lock for thread-safe socket access
+        self.socket_lock = threading.Lock()
         #threading.Thread(target=self.retransmit, daemon=True).start()
     
     def send(self, msg, addr):
@@ -39,7 +39,7 @@ class UDPProtocol:
     def retransmit(self):
         while True:
             now = time.time()
-            with self.socket_lock:  # Protect pending_acks access
+            with self.socket_lock:  
                 for uid, (msg, addr, sent_time, attempts) in list(self.pending_acks.items()):
                     if now - sent_time > 2 and attempts < 3:
                         try:
@@ -51,16 +51,13 @@ class UDPProtocol:
                     elif attempts >= 3:
                         print(f"Falha ao enviar {msg}: timeout após 3 tentativas")                        
                         del self.pending_acks[uid]
-            time.sleep(1)  # Increase sleep to reduce retransmission overhead
+            time.sleep(1) 
 
     def handle_ack(self, uid):
         with self.socket_lock:
             if uid in self.pending_acks:
-                #print(f"ACK recebido para {uid} em protocol")
                 msg, addr, sent_time, attempts, _ = self.pending_acks[uid]
                 self.pending_acks[uid] = (msg, addr, sent_time, attempts, True)
-                #del self.pending_acks[uid]
-                #print(self.pending_acks)
 
     def heartbeat_loop(self):
         while True:
@@ -110,7 +107,6 @@ class UDPProtocol:
 
     def print_devices(self):
         now = time.time()
-        print(self.devices)
         ativos = [(name, ip, port, round(now - last_seen, 1))
                 for name, (ip, port, last_seen) in self.devices.items()
                 if now - last_seen < 10]  # considerar inativo após 10s

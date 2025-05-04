@@ -10,9 +10,7 @@ class MessageHandler:
 
         parts = msg.strip().split(" ", 2)
         if len(parts) < 2: return
-        cmd, arg1 = parts[0], parts[1]
-        #print("oq retorna no handle")
-        #print(msg)           
+        cmd, arg1 = parts[0], parts[1]   
         
         # Verificação de duplicata
         if cmd not in ("HEARTBEAT",) and arg1 in self.received_ids:
@@ -32,7 +30,6 @@ class MessageHandler:
         elif cmd == "CHUNK":
             self.protocol.file_manager.handle_chunk(msg.split(" ", 1), addr)
         elif cmd == "END":
-            #print("recebendo end no handler")
             self.protocol.file_manager.handle_end(msg.split(" ", 1), addr)
         elif cmd == "ACK":
             self.protocol.handle_ack(arg1)
