@@ -86,7 +86,8 @@ class FileTransferManager:
 
     def handle_file_request(self, parts, addr):
         uid, filename, size = parts[1].split()
-        
+        total_chunks = (int(size) + 800 - 1) // 800 #calcula total chunks
+        print(total_chunks)
         self.protocol.send(f"ACK {uid}", addr)
         
         print(f"Iniciando recebimento de {filename} ({size} bytes)")
@@ -100,7 +101,12 @@ class FileTransferManager:
             counter += 1
 
         # Armazena o nome do arquivo ajustado
-        self.waiting_acks[uid] = {"filename": target_filename, "chunks": [], "received_seqs": []}
+        self.waiting_acks[uid] = {
+            "filename": target_filename, 
+            "chunks": [], 
+            "received_seqs": set(), 
+            "total_chunks": total_chunks
+        }
 
         # Cria o arquivo com o nome ajustado
         with open(target_filename, "wb") as f:
@@ -116,18 +122,39 @@ class FileTransferManager:
         if uid not in self.waiting_acks:
             print(f"Recebeu chunk para UID desconhecido: {uid}")
             return
+
+
+        if uid in self.waiting_acks:
+            data = self.waiting_acks[uid]
+            if seq not in data["received_seqs"]:
+                data["received_seqs"].add(seq)
+                data["chunks"].append((seq, decoded))
+                total_chunks = int(data["total_chunks"])
+                print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
+                self.protocol.send(f"ACK {uid}_{seq}", addr)
         
-        print(f"\rRecebeu bloco {uid}_{seq}", end="", flush=True)
 
         # Armazenar chunk
-        self.waiting_acks[uid]["chunks"].append((seq, decoded))
-        self.protocol.send(f"ACK {uid}_{seq}", addr)
+        #self.waiting_acks[uid]["chunks"].append((seq, decoded))
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
         uid, seq = uid.split("_")
+        
         if uid not in self.waiting_acks:
             return
+
+        data = self.waiting_acks[uid]
+        total = data["total_chunks"]
+        received = data["received_seqs"]
+        missing = [str(i) for i in range(total) if i not in received]
+        
+        if missing:
+            self.protocol.send(f"NACK {uid} {' '.join(missing)}", addr)
+            print(f"{missing.count} CHUNKS perdidos")
+            return
+
+        print("0 CHUNKS perdidos")
 
         # Enviar ACK imediato para confirmar recebimento do END
         self.protocol.send(f"ACK {uid}_end", addr)
@@ -150,3 +177,16 @@ class FileTransferManager:
             self.protocol.send(f"NACK {uid} hash mismatch", addr)
 
         del self.waiting_acks[uid]
+
+    def retransmit_chunks(self, uid, filepath, missing_seqs):
+        print(f"Reenviando chunks ausentes: {missing_seqs}")
+        with open(filepath, "rb") as f:
+            for seq_str in missing_seqs:
+                seq = int(seq_str)
+                f.seek(seq * 800)
+                chunk = f.read(800)
+                encoded = base64.b64encode(chunk).decode()
+                chunk_id = f"{uid}_{seq}"
+                msg = f"CHUNK {chunk_id} {seq} {encoded}"
+                self.protocol.send(msg, self.protocol.devices[target_name])
+                self.wait_for_ack(chunk_id)
