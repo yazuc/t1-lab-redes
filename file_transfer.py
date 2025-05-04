@@ -1,4 +1,4 @@
-import os, base64, threading, time
+import os, base64, threading, time, random
 from utils import split_file, hash_file
 
 class FileTransferManager:
@@ -6,17 +6,20 @@ class FileTransferManager:
         self.protocol = protocol
         self.waiting_acks = {}
         self.lock = threading.Lock()  # Para acesso seguro aos dicionários
+        self.ignore = 0
+        self.max_attempts = 5
 
     def wait_for_ack(self, ack_id, timeout=5.0):
         """Aguarda o ACK com o ID especificado por até 'timeout' segundos."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            with self.lock:
-                if ack_id in self.protocol.pending_acks:
-                    _, _, _, _, validado = self.protocol.pending_acks[ack_id]
-                    if validado:
-                        del self.protocol.pending_acks[ack_id]
-                        return True
+            #with self.lock:
+            if ack_id in self.protocol.pending_acks:
+                _, _, _, _, validado = self.protocol.pending_acks[ack_id]
+                if validado:
+                    print("validei e estou deletando")
+                    #del self.protocol.pending_acks[ack_id]
+                    return True
             time.sleep(0.002)  # Evitar consumo excessivo de CPU
         return False
 
@@ -36,7 +39,7 @@ class FileTransferManager:
                 print(f"Enviando FILE {uid}")
                 if not self.wait_for_ack(uid, timeout=5.0):
                     print(f"Timeout aguardando ACK para FILE {uid}")
-                    return
+                    #return
 
                 # Tratamento de arquivo vazio
                 if size == 0:
@@ -45,7 +48,7 @@ class FileTransferManager:
                     print(f"Enviando END {uid}_end")
                     if not self.wait_for_ack(uid, timeout=5.0):
                         print(f"Timeout aguardando ACK para END {uid}")
-                        return
+                        #return
                     print("Transferência de arquivo vazio concluída.")
                     return
 
@@ -62,11 +65,18 @@ class FileTransferManager:
                         encoded = base64.b64encode(chunk).decode()
                         chunk_id = f"{uid}_{seq}"
                         msg = f"CHUNK {chunk_id} {seq} {encoded}"
-                        self.protocol.send(msg, addr)
-                        print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
-                        if not self.wait_for_ack(chunk_id, timeout=5.0):
-                            print(f"Timeout aguardando ACK para CHUNK {chunk_id}")
-                            return
+
+                        for attempt in range(self.max_attempts):
+                            self.protocol.send(msg, addr)
+                            print(msg, addr)
+                            print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
+                            if self.wait_for_ack(chunk_id, timeout=15.0):
+                                break  # ACK recebido, prosseguir para o próximo chunk
+                            print(f"\nTimeout aguardando ACK para CHUNK {chunk_id}. Tentativa {attempt + 1}/{self.max_attempts}")
+                        else:
+                            print(f"\nFalha ao enviar CHUNK {chunk_id} após {self.max_attempts} tentativas")
+                            return  # Aborta a transmissão após falhas
+
                         seq += 1
                         time.sleep(0.001)  # Evitar flooding
 
@@ -77,7 +87,7 @@ class FileTransferManager:
                 print(f"Enviando END {end_id}")
                 if not self.wait_for_ack(end_id, timeout=5.0):
                     print(f"Timeout aguardando ACK para END {uid}")
-                    return
+                    #return
 
                 print("Transferência concluída com sucesso.")
                 return
@@ -118,6 +128,7 @@ class FileTransferManager:
         seq = int(seq)
 
         decoded = base64.b64decode(data)
+        data = self.waiting_acks[uid]
 
         if uid not in self.waiting_acks:
             print(f"Recebeu chunk para UID desconhecido: {uid}")
@@ -125,12 +136,11 @@ class FileTransferManager:
 
 
         if uid in self.waiting_acks:
-            data = self.waiting_acks[uid]
             if seq not in data["received_seqs"]:
                 data["received_seqs"].add(seq)
                 data["chunks"].append((seq, decoded))
                 total_chunks = int(data["total_chunks"])
-                print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
+                print(f"\rRecebendo bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
                 self.protocol.send(f"ACK {uid}_{seq}", addr)
         
 
@@ -151,7 +161,8 @@ class FileTransferManager:
         
         if missing:
             self.protocol.send(f"NACK {uid} {' '.join(missing)}", addr)
-            print(f"{missing.count} CHUNKS perdidos")
+            print()
+            print(f"{len(missing)} CHUNKS perdidos")
             return
 
         print("0 CHUNKS perdidos")
@@ -178,15 +189,15 @@ class FileTransferManager:
 
         del self.waiting_acks[uid]
 
-    def retransmit_chunks(self, uid, filepath, missing_seqs):
-        print(f"Reenviando chunks ausentes: {missing_seqs}")
-        with open(filepath, "rb") as f:
-            for seq_str in missing_seqs:
-                seq = int(seq_str)
-                f.seek(seq * 800)
-                chunk = f.read(800)
-                encoded = base64.b64encode(chunk).decode()
-                chunk_id = f"{uid}_{seq}"
-                msg = f"CHUNK {chunk_id} {seq} {encoded}"
-                self.protocol.send(msg, self.protocol.devices[target_name])
-                self.wait_for_ack(chunk_id)
+    # def retransmit_chunks(self, uid, filepath, missing_seqs):
+    #     print(f"Reenviando chunks ausentes: {missing_seqs}")
+    #     with open(filepath, "rb") as f:
+    #         for seq_str in missing_seqs:
+    #             seq = int(seq_str)
+    #             f.seek(seq * 800)
+    #             chunk = f.read(800)
+    #             encoded = base64.b64encode(chunk).decode()
+    #             chunk_id = f"{uid}_{seq}"
+    #             msg = f"CHUNK {chunk_id} {seq} {encoded}"
+    #             self.protocol.send(msg, self.protocol.devices[target_name])
+    #             self.wait_for_ack(chunk_id)

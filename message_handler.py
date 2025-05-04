@@ -9,6 +9,7 @@ class MessageHandler:
     def handle(self, msg, addr):
 
         parts = msg.strip().split(" ", 2)
+        #print(parts)
         if len(parts) < 2: return
         cmd, arg1 = parts[0], parts[1]   
         
@@ -28,11 +29,12 @@ class MessageHandler:
         elif cmd == "FILE":
             self.protocol.file_manager.handle_file_request(msg.split(" ", 1), addr)
         elif cmd == "CHUNK":
+            print("recebi o chunk")
             self.protocol.file_manager.handle_chunk(msg.split(" ", 1), addr)
         elif cmd == "END":
             self.protocol.file_manager.handle_end(msg.split(" ", 1), addr)
         elif cmd == "ACK":
             self.protocol.handle_ack(arg1)
         elif cmd == "NACK":
-            print(f"NACK recebido para {arg1}: {parts[2]}")
-            self.protocol.retransmit(arg1)
+            #print(f"NACK recebido para {arg1}: {parts[2]}")
+            self.protocol.handle_nack(parts, addr)

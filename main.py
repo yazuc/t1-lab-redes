@@ -27,7 +27,8 @@ def main():
             protocol.send_talk(nome, " ".join(msg))
         elif cmd.startswith("sendfile "):
             _, nome, arquivo = cmd.split()
-            threading.Thread(target=protocol.file_manager.send_file, args=(nome, arquivo), daemon=True).start()
+            protocol.file_manager.send_file(nome, arquivo)
+            #threading.Thread(target=protocol.file_manager.send_file, args=(nome, arquivo), daemon=True).start()
         else:
             print("Comando inválido.")
             print("> ")

@@ -2,6 +2,7 @@ import socket, threading, time, base64
 from utils import current_time, hash_file, split_file
 from message_handler import MessageHandler
 from file_transfer import FileTransferManager
+from datetime import datetime
 
 BROADCAST_IP = '<broadcast>'
 BUFFER_SIZE = 65507
@@ -15,8 +16,8 @@ class UDPProtocol:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024)  # 2MB send buffer
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)  # 2MB receive buffer
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1048576)  # 2MB send buffer
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1048576)  # 2MB receive buffer
         self.sock.bind(("", port))
         self.handler = MessageHandler(self)
         self.pending_acks = {}  # {uid: (msg, addr, timestamp, attempts)}        
@@ -30,34 +31,18 @@ class UDPProtocol:
             uid = parts[1]
             #self.pending_acks[uid] = (msg, addr, time.time(), 0)
             self.pending_acks[uid] = (msg, addr, time.time(), 0, False)
-        with self.socket_lock:
-            try:
-                self.sock.sendto(msg.encode(), addr)
-            except socket.error as e:
-                print(f"Socket error during send: {e}")
-
-    def retransmit(self):
-        while True:
-            now = time.time()
-            with self.socket_lock:  
-                for uid, (msg, addr, sent_time, attempts) in list(self.pending_acks.items()):
-                    if now - sent_time > 2 and attempts < 3:
-                        try:
-                            self.sock.sendto(msg.encode(), addr)
-                            self.pending_acks[uid] = (msg, addr, now, attempts + 1)
-                            print(f"Retransmitting {uid}, attempt {attempts + 1}")
-                        except socket.error as e:
-                            print(f"Socket error during retransmit: {e}")
-                    elif attempts >= 3:
-                        print(f"Falha ao enviar {msg}: timeout após 3 tentativas")                        
-                        del self.pending_acks[uid]
-            time.sleep(1) 
+        #with self.socket_lock:
+        try:
+            self.sock.sendto(msg.encode(), addr)
+        except socket.error as e:
+            print(f"Socket error during send: {e}")
 
     def handle_ack(self, uid):
-        with self.socket_lock:
-            if uid in self.pending_acks:
-                msg, addr, sent_time, attempts, _ = self.pending_acks[uid]
-                self.pending_acks[uid] = (msg, addr, sent_time, attempts, True)
+        print("tratando de", uid)
+        #with self.socket_lock:
+        if uid in self.pending_acks:
+            msg, addr, sent_time, attempts, _ = self.pending_acks[uid]
+            self.pending_acks[uid] = (msg, addr, sent_time, attempts, True)
 
     def heartbeat_loop(self):
         while True:
@@ -84,6 +69,7 @@ class UDPProtocol:
                 msg = data.decode()
                 sender_ip, sender_port = addr
 
+
                 if sender_ip == self.name and sender_port == self.port:
                     continue
 
@@ -95,7 +81,11 @@ class UDPProtocol:
                     last_seen = time.time()
                     self.devices[name] = (ip, port, last_seen)
                 elif msg.startswith(("TALK", "FILE", "CHUNK", "END", "ACK", "NACK")):
-                    self.handler.handle(msg, addr)
+                    try:
+                        print(f"[{datetime.now()}] Despachando mensagem para handler: {msg}")
+                        self.handler.handle(msg, addr)
+                    except Exception as e:
+                        print(f"[{datetime.now()}] Erro no handler para mensagem {msg}: {e}")
                 else:
                     print(f"Mensagem desconhecida: {msg}")
             except socket.error as e:
@@ -136,3 +126,24 @@ class UDPProtocol:
 
     def send_file(self, target_name, filepath):
         self.file_manager.send_file(target_name, filepath)
+
+    def handle_nack(self, parts, addr):
+    # Extrai os dados do NACK
+        print("caiu no nackhandler")
+        uid = parts[1]
+        missing_chunks = list(map(int, parts[2:]))  # Conversão para lista de inteiros
+
+        print(f"Recebido NACK para UID {uid}. Pacotes perdidos: {missing_chunks}")
+        
+        # Recupera os pacotes perdidos e envia novamente
+        if uid in self.waiting_acks:
+            data = self.waiting_acks[uid]
+            for seq in missing_chunks:
+                # Envia os pacotes perdidos de volta
+                print(f"Reenviando CHUNK {seq} de {uid}")
+                chunk_data = data["chunks"][seq]  # Supondo que "chunks" já tenha os dados
+                chunk = base64.b64encode(chunk_data).decode()
+                chunk_id = f"{uid}_{seq}"
+                msg = f"CHUNK {chunk_id} {seq} {chunk}"
+                self.protocol.send(msg, addr)
+
