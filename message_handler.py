@@ -29,7 +29,7 @@ class MessageHandler:
         elif cmd == "FILE":
             self.protocol.file_manager.handle_file_request(msg.split(" ", 1), addr)
         elif cmd == "CHUNK":
-            print("recebi o chunk")
+            #print("recebi o chunk")
             self.protocol.file_manager.handle_chunk(msg.split(" ", 1), addr)
         elif cmd == "END":
             self.protocol.file_manager.handle_end(msg.split(" ", 1), addr)

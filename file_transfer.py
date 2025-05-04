@@ -52,9 +52,9 @@ class FileTransferManager:
                     print("Transferência de arquivo vazio concluída.")
                     return
 
-                # Enviar blocos CHUNK com leitura parcial
+                # CHUNK com leitura parcial
                 chunk_size = 800
-                total_chunks = (size + chunk_size - 1) // chunk_size  # Arredondamento para cima
+                total_chunks = (size + chunk_size - 1) // chunk_size  
 
                 with open(filepath, "rb") as f:
                     seq = 0
@@ -79,7 +79,7 @@ class FileTransferManager:
                             return  # Aborta a transmissão após falhas
 
                         seq += 1
-                        time.sleep(0.001)  # Evitar flooding
+                        time.sleep(0.001)  
 
                 # Enviar mensagem END
                 h = hash_file(filepath)
@@ -180,7 +180,7 @@ class FileTransferManager:
 
             ack_msg = f"ACK {uid}_{seq}"
             self.protocol.send(ack_msg, addr)
-            print(ack_msg)
+            #print(ack_msg)
 
 
     def handle_end(self, parts, addr):
