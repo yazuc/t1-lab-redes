@@ -1,4 +1,4 @@
-import os, base64, threading, time
+import os, base64, threading, time, random
 from utils import split_file, hash_file
 
 class FileTransferManager:
@@ -6,23 +6,22 @@ class FileTransferManager:
         self.protocol = protocol
         self.waiting_acks = {}
         self.lock = threading.Lock()  # Para acesso seguro aos dicionários
+        self.ignore = 0
+        self.max_attempts = 5
 
     def wait_for_ack(self, ack_id, timeout=5.0):
         """Aguarda o ACK com o ID especificado por até 'timeout' segundos."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            with self.lock:
-                if ack_id in self.protocol.pending_acks:
-                    del self.protocol.pending_acks[ack_id]
+            #with self.lock:
+            if ack_id in self.protocol.pending_acks:
+                _, _, _, _, validado = self.protocol.pending_acks[ack_id]
+                if validado:
+                    #print("validei e estou deletando")
+                    #del self.protocol.pending_acks[ack_id]
                     return True
-            time.sleep(0.1)  # Evitar consumo excessivo de CPU
+            time.sleep(0.002)  # Evitar consumo excessivo de CPU
         return False
-
-    def handle_ack(self, uid):
-        """Registra o recebimento de um ACK."""
-        with self.lock:
-            self.protocol.pending_acks[uid] = True
-            print(f"ACK recebido para {uid}")
 
     def send_file(self, target_name, filepath):
         if not os.path.exists(filepath):
@@ -40,7 +39,7 @@ class FileTransferManager:
                 print(f"Enviando FILE {uid}")
                 if not self.wait_for_ack(uid, timeout=5.0):
                     print(f"Timeout aguardando ACK para FILE {uid}")
-                    return
+                    #return
 
                 # Tratamento de arquivo vazio
                 if size == 0:
@@ -49,23 +48,38 @@ class FileTransferManager:
                     print(f"Enviando END {uid}_end")
                     if not self.wait_for_ack(uid, timeout=5.0):
                         print(f"Timeout aguardando ACK para END {uid}")
-                        return
+                        #return
                     print("Transferência de arquivo vazio concluída.")
                     return
 
-                # Enviar blocos CHUNK com feedback de progresso
-                chunks = list(split_file(filepath, chunk_size=800))
-                total_chunks = len(chunks)
-                for seq, chunk in enumerate(chunks):
-                    encoded = base64.b64encode(chunk).decode()
-                    chunk_id = f"{uid}_{seq}"
-                    msg = f"CHUNK {chunk_id} {seq} {encoded}"
-                    self.protocol.send(msg, addr)
-                    print(f"Enviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)")
-                    if not self.wait_for_ack(chunk_id, timeout=5.0):
-                        print(f"Timeout aguardando ACK para CHUNK {chunk_id}")
-                        return
-                    time.sleep(0.05)  # Evitar flooding
+                # CHUNK com leitura parcial
+                chunk_size = 800
+                total_chunks = (size + chunk_size - 1) // chunk_size  
+
+                with open(filepath, "rb") as f:
+                    seq = 0
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        encoded = base64.b64encode(chunk).decode()
+                        chunk_id = f"{uid}_{seq}"
+                        msg = f"CHUNK {chunk_id} {seq} {encoded}"
+
+                        for attempt in range(self.max_attempts):
+                            self.protocol.send(msg, addr)
+                            #print(msg, addr)
+                            print(f"\rEnviando bloco {seq + 1}/{total_chunks} ({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
+                            if self.wait_for_ack(chunk_id, timeout=5.0):
+                                #print(self.protocol.pending_acks)
+                                break  # ACK recebido, prosseguir para o próximo chunk
+                            print(f"\nTimeout aguardando ACK para CHUNK {chunk_id}. Tentativa {attempt + 1}/{self.max_attempts}")
+                        else:
+                            print(f"\nFalha ao enviar CHUNK {chunk_id} após {self.max_attempts} tentativas")
+                            return  # Aborta a transmissão após falhas
+
+                        seq += 1
+                        time.sleep(0.001)  
 
                 # Enviar mensagem END
                 h = hash_file(filepath)
@@ -74,7 +88,7 @@ class FileTransferManager:
                 print(f"Enviando END {end_id}")
                 if not self.wait_for_ack(end_id, timeout=5.0):
                     print(f"Timeout aguardando ACK para END {uid}")
-                    return
+                    #return
 
                 print("Transferência concluída com sucesso.")
                 return
@@ -83,7 +97,8 @@ class FileTransferManager:
 
     def handle_file_request(self, parts, addr):
         uid, filename, size = parts[1].split()
-        
+        total_chunks = (int(size) + 800 - 1) // 800 #calcula total chunks
+        print(total_chunks)
         self.protocol.send(f"ACK {uid}", addr)
         
         print(f"Iniciando recebimento de {filename} ({size} bytes)")
@@ -97,43 +112,99 @@ class FileTransferManager:
             counter += 1
 
         # Armazena o nome do arquivo ajustado
-        self.waiting_acks[uid] = {"filename": target_filename, "chunks": [], "received_seqs": []}
+        self.waiting_acks[uid] = {
+            "filename": target_filename, 
+            "chunks": [], 
+            "received_seqs": set(), 
+            "total_chunks": total_chunks
+        }
 
         # Cria o arquivo com o nome ajustado
         with open(target_filename, "wb") as f:
             pass
 
     def handle_chunk(self, parts, addr):
-        uid, seq, data = parts[1].split(" ", 2)
-        uid, seq = uid.split("_")
-        seq = int(seq)
-        self.protocol.send(f"ACK {uid}", addr)
+        if not parts or len(parts) < 2:
+            print("CHUNK malformado: partes insuficientes")
+            return
 
-        # seq = int(seq)
-        # if uid not in self.waiting_acks:
-        #     return
+        chunk_info = parts[1]
+        if " " not in chunk_info:
+            print("CHUNK malformado: faltando campos de uid, seq ou dados")
+            return
 
-        # # Verificar duplicata
-        # if (uid, seq) in self.waiting_acks[uid].get("received_seqs", set()):
-        #     # Enviar ACK mesmo para chunk duplicado, se desejado
-        #     self.protocol.send(f"ACK {uid}_{seq}", addr)
-        #     return
+        split_parts = chunk_info.split(" ", 2)
+        if len(split_parts) < 3:
+            print("CHUNK malformado: divisão insuficiente")
+            return
 
-        # Armazenar chunk
-        self.waiting_acks[uid]["chunks"].append((seq, base64.b64decode(data)))
-        #self.waiting_acks[uid]["received_seqs"] = self.waiting_acks[uid].get("received_seqs", set()) | {(uid, seq)}
-        self.protocol.send(f"ACK {uid}_{seq}", addr)
+        uid_seq, seq_str, data = split_parts
+        if "_" not in uid_seq:
+            print("CHUNK malformado: uid_seq não contém '_'")
+            return
+
+        uid, seq_index = uid_seq.split("_", 1)
+        if not seq_index.isdigit():
+            print(f"CHUNK malformado: seq não é um número ({seq_index})")
+            return
+
+        seq = int(seq_index)
+
+        if uid not in self.waiting_acks:
+            print(f"Recebeu chunk para UID desconhecido: {uid}")
+            return
+
+        file_data = self.waiting_acks[uid]
+        if "received_seqs" not in file_data or "chunks" not in file_data or "total_chunks" not in file_data:
+            print(f"Dados incompletos para UID {uid}")
+            return
+
+        try:
+            decoded = base64.b64decode(data)
+        except Exception as e:
+            print(f"Erro ao decodificar chunk base64: {e}")
+            return
+
+        if seq not in file_data["received_seqs"]:
+            file_data["received_seqs"].add(seq)
+            file_data["chunks"].append((seq, decoded))
+
+            try:
+                total_chunks = int(file_data["total_chunks"])
+            except ValueError:
+                print("total_chunks não é um inteiro válido")
+                return
+
+            print(f"\rRecebendo bloco {seq + 1}/{total_chunks} "
+                f"({(seq + 1) / total_chunks * 100:.1f}%)", end="", flush=True)
+
+            ack_msg = f"ACK {uid}_{seq}"
+            self.protocol.send(ack_msg, addr)
+            #print(ack_msg)
+
 
     def handle_end(self, parts, addr):
         uid, hash_remote = parts[1].split()
-        #print("caiu no handler_end")
-        #print(uid)
         uid, seq = uid.split("_")
+        
         if uid not in self.waiting_acks:
             return
 
+        data = self.waiting_acks[uid]
+        total = data["total_chunks"]
+        received = data["received_seqs"]
+        missing = [str(i) for i in range(total) if i not in received]
+        
+        if missing:
+            self.protocol.send(f"NACK {uid} {' '.join(missing)}", addr)
+            print()
+            print(f"{len(missing)} CHUNKS perdidos")
+            return
+
+        print("0 CHUNKS perdidos")
+
         # Enviar ACK imediato para confirmar recebimento do END
-        self.protocol.send(f"ACK {uid}", addr)
+        self.protocol.send(f"ACK {uid}_end", addr)
         print("enviou ACK para o END, precisa validar hash ainda")
 
         target_filename = self.waiting_acks[uid]["filename"]

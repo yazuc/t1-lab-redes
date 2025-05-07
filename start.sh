@@ -29,4 +29,4 @@ sleep 2
 podman cp ~/ex ${CONTAINER_NAME}:/ex
 
 # Abre o navegador na porta correta
-xdg-open http://localhost:${PORT} >/dev/null 2>&1 &
+#xdg-open http://localhost:${PORT} >/dev/null 2>&1 &

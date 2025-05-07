@@ -9,10 +9,9 @@ class MessageHandler:
     def handle(self, msg, addr):
 
         parts = msg.strip().split(" ", 2)
+        #print(parts)
         if len(parts) < 2: return
-        cmd, arg1 = parts[0], parts[1]
-        #print("oq retorna no handle")
-        #print(msg)           
+        cmd, arg1 = parts[0], parts[1]   
         
         # Verificação de duplicata
         if cmd not in ("HEARTBEAT",) and arg1 in self.received_ids:
@@ -25,17 +24,16 @@ class MessageHandler:
             self.protocol.devices[name] = (addr[0], addr[1], time.time())
         elif cmd == "TALK":
             uid, content = arg1, parts[2]
-            print(f"[Mensagem recebida] {addr} diz: {content}") 
+            print(f"Mensagem recebida de {addr[0]}: [{uid}] {content}")            
             self.protocol.send(f"ACK {uid}", addr)
         elif cmd == "FILE":
             self.protocol.file_manager.handle_file_request(msg.split(" ", 1), addr)
         elif cmd == "CHUNK":
-            print("recebendo chunks no handler")
+            #print("recebi o chunk")
             self.protocol.file_manager.handle_chunk(msg.split(" ", 1), addr)
         elif cmd == "END":
-            print("recebendo end no handler")
             self.protocol.file_manager.handle_end(msg.split(" ", 1), addr)
         elif cmd == "ACK":
             self.protocol.handle_ack(arg1)
         elif cmd == "NACK":
-            print(f"NACK recebido para {arg1}: {parts[2]}")
+            print(f"NACK recebido para {arg1}: {parts[2]}")            
